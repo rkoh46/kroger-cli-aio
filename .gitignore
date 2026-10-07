@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+
+# kroger-aio runtime state — NEVER commit (browser cookies, clipped ledger)
+.kroger-aio/
+.user-data/
+
+# Credentials / local config — NEVER commit
+config.ini
+.env
+credentials*
+
+# Caches
+.cache.pkl
+*.pkl
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Discover artifacts (live page dumps)
+discover.html
+discover.buttons.json
