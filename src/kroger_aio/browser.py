@@ -170,6 +170,15 @@ def run_visible_login(domain: str, username: str, console=None) -> bool:
         context = pw.chromium.launch_persistent_context(**_launch_kwargs(headless=False))
         try:
             page = context.pages[0] if context.pages else context.new_page()
+            # Short-circuit: an existing session is the common case, and
+            # re-hitting /signin while already authed can trip the WAF
+            # (Akamai "Access Denied" on the OAuth handoff). Check first.
+            _open_coupons(page, domain)
+            if _signed_in_state(page) == "signed_in":
+                out.print(
+                    "[bold green]Already signed in — nothing to do.[/bold green]"
+                )
+                return True
             out.print(
                 f"[bold]A Chromium window is opening on www.{domain}.[/bold]\n"
                 "[bold]Type your Kroger password into the password field in that "

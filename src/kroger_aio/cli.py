@@ -71,14 +71,14 @@ def login(
     passes through this program, the shell, or env.
     """
     dom = domain or _domain()
-    username = os.environ.get("KROGER_EMAIL", "")
-    if not username:
-        username = typer.prompt("Kroger username (email)")
     # Persist the email (not the password) so future logins skip the prompt.
     from .config import AccountProfile, ensure_state_dir
 
     ensure_state_dir()
     prof = AccountProfile.load()
+    username = os.environ.get("KROGER_EMAIL", "") or prof.data.get("email", "")
+    if not username:
+        username = typer.prompt("Kroger username (email)")
     if prof.data.get("email") != username:
         prof.data["email"] = username
         prof.save()
