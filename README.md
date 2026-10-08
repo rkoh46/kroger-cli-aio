@@ -134,6 +134,8 @@ Compare the field names against `src/kroger_aio/coupons.py` (endpoints,
 
 ## License & credit
 
-Original project by Nikolay Shmakov
-([github.com/Shmakov/kroger-cli](https://github.com/Shmakov/kroger-cli)).
-This fork keeps the original commit history and credits the original author.
+Original project by **Nikolay Shmakov** —
+[github.com/Shmakov/kroger-cli](https://github.com/Shmakov/kroger-cli).
+This is an independent modernized fork (fresh history); it keeps the original
+author's credit for the design and the idea, and the original repo remains the
+canonical upstream to diff against.
