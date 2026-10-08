@@ -26,7 +26,7 @@ from . import __version__
 from .account import get_points, get_profile, get_purchases
 from .browser import SessionError, browser_session, run_visible_login
 from .config import KROGER_STATE_DIR
-from .coupons import clip_all, clip_status
+from .coupons import DEFAULT_TARGET, clip_all, clip_status
 from .coupons import discover as discover_dump
 
 app = typer.Typer(
@@ -97,14 +97,20 @@ def clip(
     free_space: bool = typer.Option(
         False, "--free-space",
         help="If the card is full, unclip our lowest-value previously-clipped "
-             "coupons to make room for new ones"),
+             "coupons to make room for new ones (value-swaps when at the "
+             "target)"),
+    target: int = typer.Option(
+        None, "--target",
+        help="Stop clipping once the card reaches this many coupons "
+             f"(default {DEFAULT_TARGET}, env KROGER_TARGET)"),
     as_json: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
     """Clip every available coupon (API-driven, idempotent)."""
     dom = domain or _domain()
     try:
         with browser_session(dom, require_session=True) as page:
-            result = clip_all(page, dom, category=category, free_space=free_space)
+            result = clip_all(page, dom, category=category,
+                              free_space=free_space, target=target)
     except SessionError as e:
         if as_json:
             print(json.dumps({"error": "session", "detail": str(e)}))
@@ -130,6 +136,12 @@ def clip(
                 f"{result.get('unclipped_remaining')} still available).[/yellow] "
                 "[dim]Re-run later when coupons expire, or use --free-space "
                 "to swap in new ones.[/dim]"
+            )
+        elif result.get("target_reached"):
+            console.print(
+                f"[dim]Stopped at the --target cap of "
+                f"{result.get('target')} clipped (headroom left before the "
+                f"server's ~250 cap).[/dim]"
             )
         if result.get("freed"):
             console.print(f"[dim]Unclipped {len(result['freed'])} old coupon(s) "

@@ -63,10 +63,19 @@ observed). When the card is full, the server rejects new clips with
 how many remain available. Options:
 
 - wait — old coupons expire every week and free space (re-run `clip`);
-- `kroger-aio clip --free-space` — unclip this tool's own lowest-value
-  already-clipped coupons to make room for newer/higher-value ones (it never
-  touches coupons you clipped yourself manually, per the ledger);
+- `kroger-aio clip --free-space` — bring the card down to the target and
+  value-swap this tool's own lowest-value clips for higher-value new ones
+  (it never touches coupons you clipped yourself manually, per the ledger);
 - `kroger-aio clip --category "Meat & Seafood"` — only clip one department.
+
+### The target cap (default 239)
+
+`clip` stops at **239** by default — deliberately *before* the server's ~250
+cap. This keeps a buffer so runs never end in a wall of 422 rejections at the
+hard limit (and stays clear of the "maximum number of offers" state the
+website complains about). The headroom is filled by the next run, so nothing
+is left on the table — space frees as coupons expire weekly. Override with
+`--target 245` or `KROGER_TARGET=245`.
 
 ## Setup
 
@@ -93,9 +102,10 @@ later run is password-free.
 ## Usage
 
 ```bash
-uv run kroger-aio clip         # clip every available coupon (API-driven)
+uv run kroger-aio clip         # clip new coupons up to the target (239)
 uv run kroger-aio clip --category Produce      # one department only
-uv run kroger-aio clip --free-space            # make room when the card is full
+uv run kroger-aio clip --free-space            # trim to target + value-swap in better deals
+uv run kroger-aio clip --target 245            # override the stop cap
 uv run kroger-aio status       # card totals + unclipped by department
 uv run kroger-aio points       # rewards balance
 uv run kroger-aio profile      # account info

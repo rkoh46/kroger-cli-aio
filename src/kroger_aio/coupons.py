@@ -28,6 +28,7 @@ the engine stops cleanly and reports the remainder.
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,11 @@ from .config import LAST_RUN_PATH, Ledger, ensure_state_dir
 BASE = "/atlas/v1/savings-coupons/v1"
 UNCLIPPED = "filter.status=unclipped&filter.status=active"
 ACTIVE = "filter.status=active"
+
+# Stop clipping before the server cap so runs never end in a wall of
+# 422 rejections (which reads as hammering at their edge). Override with
+# --target or KROGER_TARGET.
+DEFAULT_TARGET = 239
 
 
 def _ts() -> str:
@@ -191,25 +197,31 @@ def _is_points(c: dict) -> bool:
 
 
 def clip_all(page: Page, domain: str, category: str | None = None,
-             free_space: bool = False) -> dict:
+             free_space: bool = False, target: int | None = None) -> dict:
     """Clip every available (unclipped, active) coupon via the API.
 
     category: optional department name (e.g. "Produce") to limit the run.
     free_space: when the card is at capacity, unclip the lowest-value
     already-clipped coupons (that we previously clipped, per the ledger) to
     make room, then clip the new ones. Off by default.
+    target: stop clipping once the card reaches this count (default
+    DEFAULT_TARGET=239, or KROGER_TARGET env) — keeps a buffer under the
+    server's ~250 cap so runs never end at the hard limit.
 
     Points events (no monetary value) are clipped first, then by value desc.
     Idempotent: the server rejects double-clips; the ledger tracks what was
     new *this run* for reporting.
     """
+    if target is None:
+        target = int(os.environ.get("KROGER_TARGET", DEFAULT_TARGET))
     ensure_state_dir()
     ledger = Ledger.load()
     h = _capture_headers(page, domain)
 
     result = {
         "clipped": 0, "failed": 0, "new": [], "skipped": 0,
-        "capacity_reached": False, "freed": [], "total_available": 0,
+        "capacity_reached": False, "target_reached": False,
+        "target": target, "freed": [], "total_available": 0,
         "ledger_pruned": 0, "domain": domain,
     }
 
@@ -236,31 +248,61 @@ def clip_all(page: Page, domain: str, category: str | None = None,
     def sort_key(c: dict):
         return (0 if _is_points(c) else 1, -(c.get("value") or 0))
 
-    target = sorted(coupons, key=sort_key)
+    start_count = len(before_ids)
+    count = start_count  # running estimate of coupons on the card
 
-    cap_hits = 0
-    for c in target:
+    # Enforce the target cap up front (free_space only): if the card is above
+    # the target, unclip our lowest-value clips down to it first.
+    if free_space and start_count > target:
+        need = start_count - target
+        for c in _ours_on_card(page, h, ledger)[:need]:
+            if not _unclip_one(page, h, ledger, result, c):
+                break
+        # Re-derive from server truth — the trim may not have fully worked.
+        _clipped_now2, _ = list_all(page, h, ACTIVE)
+        count = sum(1 for c in _clipped_now2 if c.get("addedToCard"))
+
+    room = max(0, target - count)
+    candidates = sorted(coupons, key=sort_key)
+    # Normal clip: only as many as fit under the target. free_space: the full
+    # list (it manages the count itself, clipping then value-swapping).
+    pool = candidates if free_space else candidates[:room]
+
+    ours_list: list | None = None  # cached ours (lowest first) for swaps
+    for c in pool:
         cid = str(c["id"])
+        if free_space and count >= target:
+            # At the target: value-swap — unclip our lowest, clip this better
+            # one (count stays the same). Candidates are sorted by value
+            # desc, so once this one isn't better than our lowest, stop.
+            if ours_list is None:
+                ours_list = _ours_on_card(page, h, ledger)
+            if not ours_list:
+                break
+            low = ours_list[0]
+            if not _is_points(c) and (c.get("value") or 0) <= (low.get("value") or 0):
+                break
+            if _unclip_one(page, h, ledger, result, low):
+                ours_list.pop(0)
+                status, _code = _clip(page, h, "CLIP", cid)
+                if status == 200:
+                    ledger.mark(cid, name=c.get("title", ""), when=_ts())
+                    ledger.save()  # crash-safe
+                    result["clipped"] += 1
+                    time.sleep(0.4)
+            else:
+                break  # can't unclip our lowest; next run retries
+            continue
         status, code = _clip(page, h, "CLIP", cid)
         if status == 200:
             ledger.mark(cid, name=c.get("title", ""), when=_ts())
+            ledger.save()  # crash-safe
             result["clipped"] += 1
+            count += 1
             time.sleep(0.4)
         elif "TooManyCouponsOnCard" in code:
-            cap_hits += 1
-            if free_space and cap_hits == 1:
-                # make room: unclip our lowest-value clipped coupons
-                freed = _free_space(page, h, ledger, result)
-                if freed == 0:
-                    break
-                # retry this coupon, then continue
-                status2, _code2 = _clip(page, h, "CLIP", cid)
-                if status2 == 200:
-                    ledger.mark(cid, name=c.get("title", ""), when=_ts())
-                    result["clipped"] += 1
-                    time.sleep(0.4)
-                    continue
-                break
+            # Defensive: the pool was already trimmed to `room`, so this
+            # should not happen (server count drift).
             result["capacity_reached"] = True
             break
         else:
@@ -272,8 +314,8 @@ def clip_all(page: Page, domain: str, category: str | None = None,
             result["failed"] += 1
             if result["failed"] >= 5:
                 break
-        if result["failed"] >= 5:
-            break
+    if count >= target:
+        result["target_reached"] = True
 
     # Final truth from the server: what is on the card now, and what's NEW
     # this run (after_ids - before_ids), not from our local bookkeeping.
@@ -291,29 +333,27 @@ def clip_all(page: Page, domain: str, category: str | None = None,
     return result
 
 
-def _free_space(page: Page, h: dict, ledger: Ledger, result: dict) -> int:
-    """Unclip our lowest-value clipped coupons (ledger entries that the
-    server confirms are on the card) until there is room for one more.
-    Never touches coupons the user clipped manually."""
+def _ours_on_card(page: Page, h: dict, ledger: Ledger) -> list[dict]:
+    """Our (ledger-tracked) clips that the server confirms are on the card,
+    lowest value first. Never touches coupons the user clipped manually."""
     clipped, _ = list_all(page, h, ACTIVE)
     by_id = {str(c["id"]): c for c in clipped}
     ours = [by_id[i] for i in ledger.clipped if i in by_id]
     ours.sort(key=lambda c: c.get("value") or 0)
-    freed = 0
-    for c in ours:
-        cid = str(c["id"])
-        status, _code = _clip(page, h, "UNCLIP", cid)
-        if status == 200:
-            del ledger.clipped[cid]
-            result["freed"].append(c.get("title") or cid)
-            freed += 1
-            time.sleep(0.4)
-        # stop freeing once the card count drops below cap
-        j = _get(page, h, f"{BASE}/coupons?{UNCLIPPED}&page.size=1&page.offset=0")
-        fin = _savings(j) if j.get("meta") else {}
-        if fin.get("clippedCount", 999) < _CARD_CAP:
-            break
-    return freed
+    return ours
+
+
+def _unclip_one(page: Page, h: dict, ledger: Ledger, result: dict,
+                c: dict) -> bool:
+    cid = str(c["id"])
+    status, _code = _clip(page, h, "UNCLIP", cid)
+    if status == 200:
+        ledger.clipped.pop(cid, None)
+        ledger.save()  # crash-safe
+        result["freed"].append(c.get("title") or cid)
+        time.sleep(0.4)
+        return True
+    return False
 
 
 def clip_status(page: Page, domain: str) -> dict:
