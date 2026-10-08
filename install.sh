@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# kroger-aio: one-time setup on macOS.
-# Requires: macOS with a GUI session, and `uv` (brew install uv).
+# kroger-aio: one-time setup.
+# Requires: an OS with a GUI session (macOS tested; Linux/Windows supported,
+# untested), and `uv` (macOS: `brew install uv`; see README for other OSes).
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 if ! command -v uv >/dev/null 2>&1; then
-  echo "uv not found. Install it with: brew install uv" >&2
+  echo "uv not found. Install it for your OS — see the README ('Requirements')." >&2
   exit 1
 fi
 

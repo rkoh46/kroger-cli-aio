@@ -1,8 +1,13 @@
 # kroger-aio
 
 Kroger **all-in-one** CLI: clip **all** digital coupons (not just the first
-150), check what's new, and track your account — modernized for 2026 and
-built for macOS.
+150), check what's new, and track your account — modernized for 2026.
+
+**Platform support:**
+- 🟢 **macOS** — supported; developed and tested here
+- 🟡 **Linux** — supported (no platform-specific code; untested)
+- 🟡 **Windows** — supported (untested — if the bundled Chromium gets
+  blocked, set `KROGER_BROWSER_CHANNEL=chrome` to drive your installed Chrome)
 
 > A modern, Hermes-ready fork of
 > [Shmakov/kroger-cli](https://github.com/Shmakov/kroger-cli) by
@@ -16,14 +21,18 @@ built for macOS.
 | Browser | `pyppeteer` (2019, EOL) | **Playwright** (bundled Chromium, headed — Kroger's WAF blocks headless) |
 | Login | password typed every run | **login once**, persistent session — daily runs are password-free |
 | Coupons | first 150 by relevance, button-clicked | **API-driven**: paginates Kroger's own coupon API, clips everything that fits the card, **idempotent** + per-category |
-| OS | Windows executable builds | macOS-only (Windows support removed on purpose) |
+| OS | Windows executable builds | **macOS tested**; Linux + Windows supported (untested) |
 | Output | human only | `--json` on every command + exit codes for automation |
 | Config | `config.ini` plaintext in repo dir | state in `~/.kroger-aio/` (gitignored); password typed only into the browser's own field |
 
 ## Requirements
 
-- macOS (GUI available — see "How it runs" below)
-- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
+- Any OS with a **GUI session** (a visible Chromium window is required —
+  see "How it runs" below): macOS (tested), Linux / Windows (supported,
+  untested)
+- [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS;
+  `curl -LsSf https://astral.sh/uv/install.sh | sh` on Linux;
+  `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` on Windows)
 - Playwright Chromium (installed automatically by `install.sh`)
 
 ## How it works (important)
@@ -108,8 +117,8 @@ This tool is designed to be driven by a Hermes agent:
 - A **cron job** runs `clip --json` on a schedule; when nothing new is
   clipped it stays silent, and it pings you only when new coupons are clipped
   or the session needs a re-login. (Runs need a GUI session for the visible
-  window — fine when the Mac is awake and logged in; the skill handles the
-  "Mac asleep / window unavailable" case by deferring and notifying.)
+  window — fine when the desktop is awake and logged in; the skill handles
+  the "machine asleep / window unavailable" case by deferring and notifying.)
 
 Just ask: *"Hey, check my Kroger coupons"* — or let the schedule handle it.
 
