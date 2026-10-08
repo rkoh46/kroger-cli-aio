@@ -110,6 +110,8 @@ uv run kroger-aio status       # card totals + unclipped by department
 uv run kroger-aio points       # rewards balance
 uv run kroger-aio profile      # account info
 uv run kroger-aio purchases    # purchases page summary
+uv run kroger-aio survey --date 2026-10-06 --time 14:30 --entry-id 12345-67890-12-3456-78-90
+uv run kroger-aio menu         # interactive numbered menu (like the original)
 uv run kroger-aio discover     # dump the live API response (tuning)
 ```
 
@@ -117,6 +119,35 @@ Every command accepts `--json` (machine output) and `--domain`
 (`ralphs.com`, `dillons.com`, `kingsoopers.com`, …).
 
 **Exit codes:** `0` ok · `2` session expired (run `login`) · `3` failure.
+
+### Interactive menu
+
+`kroger-aio menu` brings back the original CLI's numbered prompt:
+
+```
+1 - Display account info        3 - Purchases Summary
+2 - Clip all digital coupons    4 - Points Balance
+5 - Complete Kroger's Survey    8 - Re-Enter username/password
+9 - Exit
+```
+
+### The receipt survey (50 fuel points)
+
+The 2020 survey host (`krogerstoresfeedback.com`) is dead. In 2026 Kroger
+runs the survey on **Qualtrics** at `kroger.com/feedback`. `kroger-aio
+survey` drives it for you: it fills the receipt's Entry ID (or store phone),
+visit date/time, answers every question screen, and submits — worth **50 fuel
+points, once per 7 days**. You'll need a recent receipt's **Entry ID** (shown
+on the receipt) and visit date/time. `--manual` stops at the final screen so
+you can finish by hand.
+
+```bash
+# with the receipt's Entry ID
+uv run kroger-aio survey --date 2026-10-06 --time 14:30 \
+    --entry-id 12345-67890-12-3456-78-90
+# or via the store-phone path (no Entry ID)
+uv run kroger-aio survey --date 2026-10-06 --time 14:30 --phone 3105551234
+```
 
 ## Hermes integration
 
