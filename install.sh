@@ -19,12 +19,11 @@ uv run playwright install chromium
 echo "==> Done."
 echo
 echo "Next steps:"
-echo "  1. Add your credentials to ~/.hermes/.env (or any env file you load):"
-echo "       KROGER_EMAIL=you@example.com"
-echo "       KROGER_PASSWORD=***"
-echo "  2. Sign in once (a visible Chromium window opens):"
+echo "  1. Sign in once (a visible Chromium window opens; type your password"
+echo "     into the password field in that window):"
 echo "       uv run kroger-aio login"
-echo "  3. Clip everything:"
+echo "     (Optional: export KROGER_EMAIL=you@example.com to pre-fill the email.)"
+echo "  2. Clip everything:"
 echo "       uv run kroger-aio clip"
 echo
 echo "Daily use: 'uv run kroger-aio clip'  (no password needed after login)."

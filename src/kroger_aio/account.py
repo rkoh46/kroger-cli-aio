@@ -1,91 +1,80 @@
-"""Account data: profile, points balance, purchases summary."""
+"""Account data: profile, points balance, purchases.
+
+2026 Kroger/brand sites no longer expose the old
+/accountmanagement/api/* JSON endpoints. Account data now lives in React
+pages; we navigate to them and read the rendered text plus the embedded
+__INITIAL_STATE__ where available.
+"""
 
 from __future__ import annotations
 
-import json
-from collections import defaultdict
+import re
+import time
 
 from playwright.sync_api import Page
-from playwright.sync_api import TimeoutError as PWTimeoutError
 
-from .config import AccountProfile
+# Verified on ralphs.com (2026). Account routes have NO /savings prefix;
+# only the coupons app does.
+ROUTE_ACCOUNT = "/account/dashboard/"
+ROUTE_POINTS = "/account/pointssummary/"
+ROUTE_PURCHASES = "/mypurchases"
 
 
-def _api_json(page: Page, url: str):
-    """Navigate to a Kroger API endpoint that returns JSON in a <pre> tag."""
-    page.goto(url, wait_until="domcontentloaded")
-    try:
-        pre = page.locator("pre").first
-        pre.wait_for(timeout=20_000)
-        return json.loads(pre.inner_text())
-    except (PWTimeoutError, json.JSONDecodeError):
-        # Fallback: some endpoints return bare JSON.
+def _goto(page: Page, domain: str, route: str) -> bool:
+    url = f"https://www.{domain.lower()}{route}"
+    for _ in range(3):
         try:
-            body = page.locator("body").inner_text(timeout=5000)
-            return json.loads(body.strip())
+            r = page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            if r is not None and r.status == 200:
+                time.sleep(6)
+                return True
         except Exception:
-            return None
+            time.sleep(2)
+    return False
+
+
+def _initial_state(page: Page) -> dict | None:
+    try:
+        return page.evaluate("() => window.__INITIAL_STATE__ || null")
+    except Exception:
+        return None
 
 
 def get_profile(page: Page, domain: str) -> dict | None:
-    data = _api_json(page, f"https://www.{domain}/accountmanagement/api/profile")
-    if isinstance(data, dict):
-        profile = AccountProfile.load()
-        profile.data = _flatten_profile(data)
-        profile.save()
-    return data
-
-
-def _flatten_profile(raw: dict | None) -> dict:
-    raw = raw or {}
-    addr = raw.get("address") or {}
+    """Best-effort account profile from the account dashboard page."""
+    if not _goto(page, domain, ROUTE_ACCOUNT):
+        return None
+    state = _initial_state(page)
+    body = page.evaluate("() => document.body.innerText")
+    first = ""
+    if state and isinstance(state.get("membership"), dict):
+        mem = state["membership"]
+        addr = mem.get("address") if isinstance(mem.get("address"), dict) else {}
+        first = addr.get("firstName") or ""
     return {
-        "first_name": raw.get("firstName", ""),
-        "last_name": raw.get("last_name", ""),
-        "email": raw.get("emailAddress", ""),
-        "loyalty_card": raw.get("loyaltyCardNumber", ""),
-        "phone": raw.get("mobilePhoneNumber", ""),
-        "address_line1": addr.get("addressLine1", ""),
-        "city": addr.get("city", ""),
-        "state": addr.get("stateCode", ""),
-        "zip": addr.get("zip", ""),
+        "first_name": first,
+        "page_text": body[:4000],
+        "has_state": state is not None,
     }
 
 
-def get_points(page: Page, domain: str) -> list | None:
-    return _api_json(page, f"https://www.{domain}/accountmanagement/api/points-summary")
-
-
-def get_purchases(page: Page, domain: str) -> list | None:
-    data = _api_json(page, f"https://www.{domain}/mypurchases/api/v1/receipt/summary/by-user-id")
-    return data if isinstance(data, list) else None
-
-
-def summarize_purchases(purchases: list) -> dict:
-    """Group purchases by year: store visits, dollars spent, dollars saved."""
-    years: dict[int, dict] = defaultdict(lambda: {"store_visits": 0, "total": 0.0, "total_savings": 0.0})
-    total = {"store_visits": 0, "total": 0.0, "total_savings": 0.0}
-    first = last = None
-
-    for p in purchases:
-        first = first or p
-        last = p
-        year = int(p.get("transactionTime", "0000")[:4])
-        if year and year >= 2000:
-            if "total" in p:
-                years[year]["total"] += float(p["total"])
-                years[year]["store_visits"] += 1
-                total["total"] += float(p["total"])
-                total["store_visits"] += 1
-            if "totalSavings" in p:
-                years[year]["total_savings"] += float(p["totalSavings"])
-                total["total_savings"] += float(p["totalSavings"])
-
-    if last is None:
-        return {}
+def get_points(page: Page, domain: str) -> dict | None:
+    """Points/rewards balance scraped from the My Points page."""
+    if not _goto(page, domain, ROUTE_POINTS):
+        return None
+    body = page.evaluate("() => document.body.innerText")
+    figures = re.findall(r"([\d,]+)\s*(?:fuel\s+)?points?", body, re.IGNORECASE)
+    dollars = re.findall(r"\$\s?([\d,]+(?:\.\d+)?)", body)
     return {
-        "years": dict(sorted(years.items())),
-        "total": total,
-        "first_purchase": first.get("transactionTime", ""),
-        "last_purchase": last.get("transactionTime", ""),
+        "point_figures": figures[:12],
+        "dollar_figures": dollars[:12],
+        "page_text": body[:4000],
     }
+
+
+def get_purchases(page: Page, domain: str) -> dict | None:
+    """Purchases page scrape (the old by-user-id API is gone in 2026)."""
+    if not _goto(page, domain, ROUTE_PURCHASES):
+        return None
+    body = page.evaluate("() => document.body.innerText")
+    return {"page_text": body[:4000]}

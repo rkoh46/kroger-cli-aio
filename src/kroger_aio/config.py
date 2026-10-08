@@ -18,9 +18,37 @@ COUPONS_LEDGER_PATH = KROGER_STATE_DIR / "clipped_coupons.json"
 PROFILE_PATH = KROGER_STATE_DIR / "profile.json"
 LAST_RUN_PATH = KROGER_STATE_DIR / "last_run.json"
 
-# The domain to run against. Kroger corporate; Ralphs/Dillons/etc. are the same
-# platform under their own host.
+# Default store. Kroger brand sites (Ralphs, Dillons, King Soopers, ...) all
+# run the same web app under a /savings/ path prefix; kroger.com does not.
 DEFAULT_DOMAIN = "kroger.com"
+
+_BRANDS_WITH_PREFIX = {
+    "ralphs.com",
+    "dillons.com",
+    "kingsoopers.com",
+    "qfc.com",
+    "bakersplus.com",
+    "citymarket.com",
+    "frysfood.com",
+    "food4less.com",
+    "fredmeyer.com",
+    "marianos.com",
+    "metromarket.net",
+    "picknsave.com",
+    "smithsfoodanddrug.com",
+}
+
+
+def path_prefix(domain: str) -> str:
+    """Route prefix for a store domain ('' for kroger.com, '/savings' for
+    brand sites). Verified live against ralphs.com in 2026."""
+    d = domain.lower().removeprefix("www.")
+    return "/savings" if d in _BRANDS_WITH_PREFIX else ""
+
+
+def coupons_url(domain: str) -> str:
+    p = path_prefix(domain)
+    return f"https://www.{domain.lower()}{p}/cl/coupons"
 
 
 def ensure_state_dir() -> None:
@@ -30,7 +58,11 @@ def ensure_state_dir() -> None:
 
 @dataclass
 class Ledger:
-    """Tracks which coupons have been clipped, so clip-all is idempotent."""
+    """Tracks which coupons have been clipped, so clip-all is idempotent.
+
+    Keys are Kroger's stable numeric coupon ids (from data-testid
+    "CouponTitle-<id>"), which survive re-renders and page reloads.
+    """
 
     clipped: dict[str, dict] = field(default_factory=dict)
 
@@ -51,12 +83,8 @@ class Ledger:
     def is_clipped(self, coupon_id: str) -> bool:
         return coupon_id in self.clipped
 
-    def mark(self, coupon_id: str, name: str = "", price: str = "", when: str = "") -> None:
-        self.clipped[coupon_id] = {
-            "name": name,
-            "price": price,
-            "clipped_at": when,
-        }
+    def mark(self, coupon_id: str, name: str = "", when: str = "") -> None:
+        self.clipped[coupon_id] = {"name": name, "clipped_at": when}
 
     def new_since(self, prev_ids: set[str]) -> list[str]:
         return [cid for cid in self.clipped if cid not in prev_ids]
@@ -64,7 +92,7 @@ class Ledger:
 
 @dataclass
 class AccountProfile:
-    """Cached account info, used to personalize output and the survey."""
+    """Cached account info (email for pre-filling; name for display)."""
 
     data: dict = field(default_factory=dict)
 

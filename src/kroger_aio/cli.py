@@ -21,10 +21,9 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.table import Table
 
 from . import __version__
-from .account import get_points, get_profile, get_purchases, summarize_purchases
+from .account import get_points, get_profile, get_purchases
 from .browser import SessionError, browser_session, run_visible_login
 from .config import KROGER_STATE_DIR
 from .coupons import clip_all, clip_status
@@ -66,16 +65,25 @@ def login(
     domain: str = typer.Option(None, "--domain", help="kroger.com, ralphs.com, ..."),
     as_json: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
-    """Sign in once. Opens a visible Chrome window; session is persisted."""
+    """Sign in once. Opens a visible Chromium window; session is persisted.
+
+    The password is typed by you into the window's own masked field — it never
+    passes through this program, the shell, or env.
+    """
     dom = domain or _domain()
     username = os.environ.get("KROGER_EMAIL", "")
-    password = os.environ.get("KROGER_PASSWORD", "")
     if not username:
         username = typer.prompt("Kroger username (email)")
-    if not password:
-        password = typer.prompt("Password", hide_input=True)
+    # Persist the email (not the password) so future logins skip the prompt.
+    from .config import AccountProfile, ensure_state_dir
 
-    ok = run_visible_login(dom, username, password, console=console)
+    ensure_state_dir()
+    prof = AccountProfile.load()
+    if prof.data.get("email") != username:
+        prof.data["email"] = username
+        prof.save()
+
+    ok = run_visible_login(dom, username, console=console)
     if as_json:
         print(json.dumps({"signed_in": ok}))
     raise typer.Exit(EXIT_OK if ok else EXIT_FAIL)
@@ -84,13 +92,19 @@ def login(
 @app.command()
 def clip(
     domain: str = typer.Option(None, "--domain", help="Store domain"),
+    category: str = typer.Option(
+        None, "--category", help="Only clip one department, e.g. 'Produce'"),
+    free_space: bool = typer.Option(
+        False, "--free-space",
+        help="If the card is full, unclip our lowest-value previously-clipped "
+             "coupons to make room for new ones"),
     as_json: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
-    """Clip every available coupon (skips already-clipped)."""
+    """Clip every available coupon (API-driven, idempotent)."""
     dom = domain or _domain()
     try:
         with browser_session(dom, require_session=True) as page:
-            result = clip_all(page, dom)
+            result = clip_all(page, dom, category=category, free_space=free_space)
     except SessionError as e:
         if as_json:
             print(json.dumps({"error": "session", "detail": str(e)}))
@@ -109,17 +123,29 @@ def clip(
     if as_json:
         print(json.dumps(payload, indent=2))
     else:
+        if result.get("capacity_reached"):
+            console.print(
+                "[yellow]Card is at its Kroger coupon capacity "
+                f"({result.get('clipped_now_total')} clipped, "
+                f"{result.get('unclipped_remaining')} still available).[/yellow] "
+                "[dim]Re-run later when coupons expire, or use --free-space "
+                "to swap in new ones.[/dim]"
+            )
+        if result.get("freed"):
+            console.print(f"[dim]Unclipped {len(result['freed'])} old coupon(s) "
+                          "to make room.[/dim]")
         if new:
             console.print(f"[bold green]Clipped {len(new)} new coupon(s):[/bold green]")
             for name in new[:50]:
                 console.print(f"  [green]+[/green] {name}")
             if len(new) > 50:
                 console.print(f"  [dim]…and {len(new) - 50} more[/dim]")
-        else:
+        elif not result.get("capacity_reached"):
             console.print("[green]All available coupons already clipped. Nothing new.[/green]")
         console.print(
             f"[dim]Clipped this run: {result['clipped']} | "
-            f"skipped: {result['skipped']} | failed: {result['failed']}[/dim]"
+            f"failed: {result['failed']} | "
+            f"card total: {result.get('clipped_now_total', '?')}[/dim]"
         )
     raise typer.Exit(EXIT_OK)
 
@@ -151,14 +177,18 @@ def status(
         print(json.dumps(s, indent=2))
     else:
         console.print(
-            f"Total coupons: [bold]{s['total']}[/bold] | "
-            f"Clipped: [green]{s['clipped']}[/green] | "
-            f"Still available: [yellow]{s['available_unclipped']}[/yellow]"
+            f"Card: [bold]{s.get('clipped', 0)}[/bold] clipped | "
+            f"[yellow]{s.get('available_unclipped', 0)}[/yellow] still available | "
+            f"saved [green]${s.get('clipped_savings_total', 0):.2f}[/green]"
         )
-        if s["unclipped_sample"]:
-            console.print("[bold]Unclipped (first 25):[/bold]")
-            for c in s["unclipped_sample"]:
-                console.print(f"  • {c['name'] or c['id'][:60]} {c['price']}")
+        if s.get("unclipped_by_category"):
+            console.print("[bold]Unclipped by department:[/bold]")
+            for cat, n in list(s["unclipped_by_category"].items())[:30]:
+                console.print(f"  • {cat}: {n}")
+        if s.get("sample"):
+            console.print("[bold]Sample (first 15):[/bold]")
+            for c in s["sample"][:15]:
+                console.print(f"  • {c['title'] or c['id']}  [dim]({c['category']})[/dim]")
     raise typer.Exit(EXIT_OK)
 
 
@@ -179,18 +209,17 @@ def points(
             console.print(f"[bold red]{e}[/bold red]")
         raise typer.Exit(EXIT_SESSION)
     if as_json:
-        print(json.dumps(balance or [], indent=2))
+        print(json.dumps(balance or {}, indent=2))
     else:
         if not balance:
             console.print("[bold red]Couldn't retrieve points balance.[/bold red]")
         else:
-            for item in balance[1:] if isinstance(balance, list) else []:
-                try:
-                    name = item["programDisplayInfo"]["loyaltyProgramName"]
-                    bal = item["programBalance"]["balanceDescription"]
-                    console.print(f"{name}: [bold]{bal}[/bold]")
-                except (KeyError, TypeError):
-                    continue
+            for pf in balance.get("point_figures", []):
+                console.print(f"Points figure: [bold]{pf}[/bold]")
+            for df in balance.get("dollar_figures", []):
+                console.print(f"Reward figure: [bold]${df}[/bold]")
+            console.print("[dim]Open the My Points page in the window for the full "
+                          "breakdown (2026 site no longer exposes a JSON API).[/dim]")
     raise typer.Exit(EXIT_OK)
 
 
@@ -216,10 +245,11 @@ def profile(
         if not data:
             console.print("[bold red]Couldn't retrieve profile.[/bold red]")
         else:
+            if data.get("first_name"):
+                console.print(f"[bold]{data['first_name']}[/bold]")
             console.print(
-                f"{data.get('firstName', '')} {data.get('lastName', '')}\n"
-                f"{data.get('emailAddress', '')}\n"
-                f"Loyalty card: {data.get('loyaltyCardNumber', '')}"
+                "[dim]2026 site no longer exposes the profile JSON API — the "
+                "dashboard page is open in the window.[/dim]"
             )
     raise typer.Exit(EXIT_OK)
 
@@ -246,20 +276,13 @@ def purchases(
         else:
             console.print("[bold red]Couldn't retrieve purchases.[/bold red]")
         raise typer.Exit(EXIT_FAIL)
-    summary = summarize_purchases(data)
     if as_json:
-        print(json.dumps(summary, indent=2))
+        print(json.dumps(data, indent=2))
     else:
-        t = Table(title=f"Purchases ({summary.get('first_purchase', '')[:10]} – {summary.get('last_purchase', '')[:10]})")
-        t.add_column("Year")
-        t.add_column("Visits")
-        t.add_column("Spent")
-        t.add_column("Saved")
-        for year, y in summary.get("years", {}).items():
-            t.add_row(str(year), str(y["store_visits"]), f"${y['total']:.2f}", f"${y['total_savings']:.2f}")
-        tt = summary.get("total", {})
-        t.add_row("Total", str(tt.get("store_visits", 0)), f"${tt.get('total', 0):.2f}", f"${tt.get('total_savings', 0):.2f}")
-        console.print(t)
+        console.print("[bold]My Purchases (latest page text):[/bold]")
+        for line in data.get("page_text", "").splitlines()[:40]:
+            if line.strip():
+                console.print(line)
     raise typer.Exit(EXIT_OK)
 
 
@@ -276,7 +299,7 @@ def discover(
     except SessionError as e:
         console.print(f"[bold red]{e}[/bold red]")
         raise typer.Exit(EXIT_SESSION)
-    console.print(f"[green]Wrote {out}.html and {out}.buttons.json[/green]")
+    console.print(f"[green]Wrote {out}.json (API dump) and {out}.meta.json[/green]")
     raise typer.Exit(EXIT_OK)
 
 

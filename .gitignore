@@ -28,6 +28,11 @@ credentials*
 .idea/
 .vscode/
 
-# Discover artifacts (live page dumps)
+# Discover artifacts (live page/API dumps)
 discover.html
 discover.buttons.json
+discover.json
+discover.meta.json
+
+# Local API/selector recon scripts (read session tokens — never commit)
+probes/
