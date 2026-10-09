@@ -155,12 +155,19 @@ def complete_survey(page: Page, domain: str, entry_id: str | None,
         return result
     result["started"] = True
 
-    # language
-    try:
-        page.select_option("#Q_lang", "English")
-    except Exception:
-        pass
-    time.sleep(1)
+    # language — select by option TEXT (value may differ) and fire change
+    page.evaluate("""() => {
+        const sel = document.getElementById('Q_lang');
+        if (!sel) return;
+        for (const o of sel.options) {
+            if (/english/i.test(o.text + ' ' + o.value)) {
+                sel.value = o.value;
+                sel.dispatchEvent(new Event('change', {bubbles: true}));
+                return;
+            }
+        }
+    }""")
+    time.sleep(2)
 
     # screen 1
     if entry_id:

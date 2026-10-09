@@ -13,6 +13,19 @@ Kroger **all-in-one** CLI: clip **all** digital coupons (not just the first
 > [Shmakov/kroger-cli](https://github.com/Shmakov/kroger-cli) by
 > **Nikolay Shmakov** — all original credit where it's due. Thanks, Nik.
 
+## In action
+
+The interactive menu, a live `status`, and an idempotent `clip` run
+(card at its 239 target — nothing new this run):
+
+| `kroger-aio menu` | `kroger-aio status` |
+|---|---|
+| ![interactive menu](docs/menu.png) | ![status](docs/status.png) |
+
+| `kroger-aio clip` (at the target cap) |
+|---|
+| ![clip at target cap](docs/clip.png) |
+
 ## What changed vs. the original
 
 | | original | this |
@@ -140,6 +153,8 @@ visit date/time, answers every question screen, and submits — worth **50 fuel
 points, once per 7 days**. You'll need a recent receipt's **Entry ID** (shown
 on the receipt) and visit date/time. `--manual` stops at the final screen so
 you can finish by hand.
+
+![the 2026 Qualtrics survey — first screen](docs/survey.png)
 
 ```bash
 # with the receipt's Entry ID
