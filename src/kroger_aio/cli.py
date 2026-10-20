@@ -166,6 +166,28 @@ def clip(
 
 
 @app.command()
+def install_browser() -> None:
+    """Download and install the Playwright Chromium browser.
+
+    Run this once after installing kroger-aio on a new machine, or if
+    browser automation fails with 'browser not found' errors.
+    """
+    from rich.console import Console
+    from playwright.sync_api import sync_playwright
+
+    console = Console()
+    console.print("[bold]Installing Playwright Chromium browser…[/bold]")
+
+    try:
+        with sync_playwright() as pw:
+            pw.chromium.install()
+        console.print("[bold green]Browser installed successfully.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Browser install failed:[/bold red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
 def status(
     domain: str = typer.Option(None, "--domain", help="Store domain"),
     as_json: bool = typer.Option(False, "--json", help="JSON output"),
@@ -450,6 +472,9 @@ def menu(
             console.print(f"[yellow]Stopped: {result.get('error')} "
                           f"(screen {result.get('stopped_at')})[/yellow]")
 
+    def opt_install_browser():
+        install_browser()
+
     def opt_login():
         run_visible_login(dom, os.environ.get("KROGER_EMAIL", ""), console=console)
 
@@ -459,6 +484,7 @@ def menu(
         (3, "Purchases Summary", opt_purchases),
         (4, "Points Balance", opt_points),
         (5, "Complete Kroger's Survey (to earn 50 points)", opt_survey),
+        (7, "Install/Update Playwright Browser", opt_install_browser),
         (8, "Re-Enter username/password", opt_login),
         (9, "Exit", None),
     ]
