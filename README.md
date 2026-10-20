@@ -164,6 +164,33 @@ uv run kroger-aio survey --date 2026-10-06 --time 14:30 \
 uv run kroger-aio survey --date 2026-10-06 --time 14:30 --phone 3105551234
 ```
 
+## Windows .exe build
+
+To build a standalone Windows executable for distribution:
+
+```bash
+# On a Windows machine with Python 3.11+ installed
+uv sync
+uv add --dev pyinstaller
+uv run pyinstaller kroger-aio.spec --clean --noconfirm
+```
+
+This produces `dist/kroger-aio.exe` (standalone) and `dist/kroger-aio-win/`
+(directory bundle with all dependencies).
+
+To install the Playwright Chromium browser on Windows (required for the first
+run), either:
+
+- Run `kroger-aio install-browser` from the command line, or
+- Use option `7` in the interactive menu, or
+- Run `python -m playwright install chromium` directly
+
+The bundled executable works out-of-the-box — no Python or Playwright
+installation needed. The Playwright browser installs automatically on the
+first run via the `install-browser` command.
+
+For more details, see [README-WINDOWS.md](README-WINDOWS.md).
+
 ## Hermes integration
 
 This tool is designed to be driven by a Hermes agent:
