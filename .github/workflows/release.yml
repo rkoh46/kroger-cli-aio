@@ -1,0 +1,110 @@
+name: Build & Release Windows Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Install PyInstaller
+        run: uv add --dev pyinstaller
+
+      - name: Build Windows executable
+        run: uv run pyinstaller kroger-aio.spec --clean --noconfirm
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kroger-aio-windows
+          path: |
+            dist/kroger-aio.exe
+            dist/kroger-aio-win/
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kroger-aio-windows
+          path: release/
+
+      - name: Create release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: kroger-aio ${{ github.ref_name }} for Windows
+          body: |
+            # kroger-aio Windows Executable
+
+            Clip all available Kroger digital coupons on Windows.
+
+            ## What's included
+            - `kroger-aio.exe` — standalone Windows executable
+            - `kroger-aio-win/` — directory bundle with all dependencies
+
+            ## Quick start
+            1. Run `kroger-aio.exe menu`
+            2. Choose option 8 to log in
+            3. Choose option 2 to clip all coupons
+
+            ## Install Playwright browser (one-time)
+            Run `kroger-aio.exe install-browser` or use option 7 in the menu.
+
+            ## Full documentation
+            See the [README](https://github.com/rkoh46/kroger-cli-aio/blob/main/README.md).
+          draft: false
+          prerelease: false
+
+      - name: Upload executable to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: release/kroger-aio.exe
+          asset_name: kroger-aio.exe
+          asset_content_type: application/x-msdownload
+
+      - name: Upload directory bundle to release
+        run: |
+          cd release
+          zip -r kroger-aio-win.zip kroger-aio-win/
+        shell: bash
+
+      - name: Upload directory bundle to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: release/kroger-aio-win.zip
+          asset_name: kroger-aio-win.zip
+          asset_content_type: application/zip
